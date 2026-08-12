@@ -2,3 +2,4 @@ python-telegram-bot==22.8
 requests
 flask
 pymongo[srv]
+nest_asyncio
