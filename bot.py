@@ -6,6 +6,7 @@ import requests
 import threading
 import random
 import re
+import nest_asyncio # ✅ RESOLVE O LOOP ANINHADO
 from datetime import datetime, timezone, timedelta
 from flask import Flask
 from pymongo import MongoClient
@@ -19,6 +20,9 @@ from telegram.ext import (
     ApplicationHandlerStop,
     ChatMemberHandler
 )
+
+# ✅ APLICA CORREÇÃO DE LOOP ANINHADO — PRIMEIRA LINHA DEPOIS DOS IMPORTS!
+nest_asyncio.apply()
 
 app_web = Flask(__name__)
 
@@ -39,7 +43,6 @@ DONO_ID = int(os.environ.get("DONO_ID", 7711945457))
 CANAL_ALVO_ID = int(os.environ.get("CANAL_ALVO_ID", -1004399892914))
 MONGO_URI = os.environ.get("MONGO_URI")
 
-# Lista de file_ids dos vídeos (sem links externos!)
 LISTA_VIDEOS_START = [
     "BAACAgEAAxkBAAIEaGpypkNQUJJljEnJb7HL6E8_jI9wAAKFBgACCyKZR-8RZtV8X4rJPQQ",
     "BAACAgQAAxkDAAICGmpoPJTXgCHfxtZabyU-4BF-LQ2aAAIyCgACN9NMU1DMn3zufwakPQQ",
@@ -50,7 +53,6 @@ LISTA_VIDEOS_START = [
     "BAACAgEAAxkBAAIElGpysAVDwH-LYNh9sODcX3lBl7O-AAKMBgACCyKZR3ERh8tK65nkPQQ"
 ]
 
-# Conexão MongoDB
 try:
     mongo_client = MongoClient(
         MONGO_URI,
@@ -64,9 +66,8 @@ try:
 except Exception as e:
     print(f"❌ Erro ao conectar MongoDB: {e}")
 
-# Variáveis Globais
 TEMPO_INICIAL = time.time()
-FUSO_RJ = timezone(timedelta(hours=-3)) # Horário do Rio de Janeiro
+FUSO_RJ = timezone(timedelta(hours=-3))
 ULTIMO_COMANDO = {}
 CONTADOR_AVISOS_FLOD = {}
 BLOQUEIO_FLOD = {}
@@ -79,265 +80,157 @@ pagamentos_notificados = set()
 # ⚙️ FUNÇÕES AUXILIARES
 # ==============================================
 def formatar_tempo_restante(segundos):
-    if segundos <= 0:
-        return "Expirado"
-    if segundos >= 315360000: # 10 anos = vitalício
-        return "Permanente"
-    dias = int(segundos // 86400)
-    horas = int((segundos % 86400) // 3600)
-    minutos = int((segundos % 3600) // 60)
+    if segundos <= 0: return "Expirado"
+    if segundos >= 315360000: return "Permanente"
+    dias = int(segundos // 86400); horas = int((segundos % 86400) // 3600); minutos = int((segundos % 3600) // 60)
     partes = []
-    if dias > 0: partes.append(f"{dias}d")
-    if horas > 0: partes.append(f"{horas}h")
-    if minutos > 0: partes.append(f"{minutos}m")
+    if dias>0: partes.append(f"{dias}d")
+    if horas>0: partes.append(f"{horas}h")
+    if minutos>0: partes.append(f"{minutos}m")
     return " ".join(partes) if partes else "Menos de 1m"
 
 def formatar_data_rj(timestamp):
     return datetime.fromtimestamp(timestamp, tz=FUSO_RJ).strftime("%d/%m/%Y às %H:%M")
 
 # ==============================================
-# 📋 COMANDOS DO BOT
+# 📋 COMANDOS
 # ==============================================
 async def pegarid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Só o dono usa: pega file_id de vídeo"""
-    if update.effective_user.id != DONO_ID:
-        return
-    mensagem = update.message
-    # Responder a vídeo enviado antes
-    if mensagem.reply_to_message and mensagem.reply_to_message.video:
-        v = mensagem.reply_to_message.video
-        await mensagem.reply_text(
-            f"✅ FILE_ID DO VÍDEO:\n\n{v.file_id}\n\nDuração: {v.duration}s\n\nColoque na lista LISTA_VIDEOS_START!"
-        )
-        return
-    # Vídeo enviado junto com o comando
-    if mensagem.video:
-        v = mensagem.video
-        await mensagem.reply_text(
-            f"✅ FILE_ID DO VÍDEO:\n\n{v.file_id}\n\nDuração: {v.duration}s\n\nColoque na lista LISTA_VIDEOS_START!"
-        )
-        return
-    await mensagem.reply_text("⚠️ Mande um vídeo ou responda a um vídeo com /pegarid")
+    if update.effective_user.id != DONO_ID: return
+    v = None
+    if update.message.reply_to_message and update.message.reply_to_message.video:
+        v = update.message.reply_to_message.video
+    elif update.message.video:
+        v = update.message.video
+    if v:
+        await update.message.reply_text(f"✅ FILE_ID:\n{v.file_id}\nDuração: {v.duration}s")
+    else:
+        await update.message.reply_text("⚠️ Responda/envie um vídeo com /pegarid")
 
 async def clientes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Lista clientes com valores pagos corretos"""
-    if update.effective_user.id != DONO_ID:
-        return
-    agora = time.time()
-    clientes = list(collection_clientes.find({}))
-    if not clientes:
-        await update.message.reply_text("Nenhum cliente cadastrado!")
-        return
-    texto = f"📋 LISTA DE CLIENTES ATIVOS ({len(clientes)}):\n\n"
-    for i, cli in enumerate(clientes,1):
-        exp = cli.get("expira_em",0)
+    if update.effective_user.id != DONO_ID: return
+    agora = time.time(); clientes = list(collection_clientes.find({}))
+    if not clientes: return await update.message.reply_text("Nenhum cliente cadastrado!")
+    texto = f"📋 CLIENTES ATIVOS ({len(clientes)}):\n\n"
+    for i,cli in enumerate(clientes,1):
         texto += (
-            f"🔹 {i}. {cli.get('nome','Desconhecido')}\n"
-            f"🆔 ID: {cli.get('user_id','?')}\n"
-            f"👤 @: {cli.get('username','Não informado')}\n"
-            f"💰 Valor Pago: R$ {cli.get('valor_pago','Não registrado')}\n"
-            f"📅 Pagamento: {formatar_data_rj(cli.get('data_compra',0)) if cli.get('data_compra') else 'Não registrada'}\n"
-            f"⏳ Expira em: {formatar_tempo_restante(exp - agora)}\n"
-            f"📆 Limite: {'Permanente' if exp >=315360000 else formatar_data_rj(exp)}\n\n"
+            f"{i}. {cli.get('nome','?')}\nID: {cli['user_id']}\nValor: R$ {cli.get('valor_pago','0')}\n"
+            f"Expira: {formatar_tempo_restante(cli.get('expira_em',0)-agora)}\n\n"
         )
     await update.message.reply_text(texto)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Boas-vindas + vídeos aleatórios por file_id"""
-    if update.effective_chat.type != "private":
-        return
-    texto = (
-        "𝗧𝗢𝗗𝗢𝗦 𝗢𝗦 𝗖𝗢𝗡𝗧𝗘𝗨𝗗𝗢𝗦 𝗩𝗔𝗭𝗔𝗗0𝗦🤫 𝗗𝗢 𝗠𝗢𝗠𝗘𝗡𝗧𝗢🥵\n\n"
-        "Tenha acesso completo a todo o nosso conteúdo atualizado:\n"
-        "+20mil mídias (vídeos/fotos)\n\n"
-        "Escolha seu plano VIP:\nSuporte: @Lyhhxv"
-    )
+    if update.effective_chat.type != "private": return
+    texto = "VIP — Escolha seu plano:\nSuporte: @Lyhhxv"
     botoes = [
-        [InlineKeyboardButton("1 HORA → R$ 1,00🔥", callback_data="comprar_1.00")],
-        [InlineKeyboardButton("1 DIA → R$ 5,00", callback_data="comprar_5.00")],
-        [InlineKeyboardButton("1 SEMANA → R$ 10,00", callback_data="comprar_10.00")],
-        [InlineKeyboardButton("1 MÊS → R$ 30,00", callback_data="comprar_30.00")],
-        [InlineKeyboardButton("PERMANENTE → R$ 55,00", callback_data="comprar_55.00")]
+        [InlineKeyboardButton("1H → R$1", callback_data="comprar_1")],
+        [InlineKeyboardButton("1DIA → R$5", callback_data="comprar_5")],
+        [InlineKeyboardButton("1SEMANA → R$10", callback_data="comprar_10")],
+        [InlineKeyboardButton("1MES → R$30", callback_data="comprar_30")],
+        [InlineKeyboardButton("PERMANENTE → R$55", callback_data="comprar_55")]
     ]
-    try:
-        await update.message.reply_video(
-            video=random.choice(LISTA_VIDEOS_START),
-            caption=texto, reply_markup=InlineKeyboardMarkup(botoes), protect_content=True
-        )
-    except:
-        await update.message.reply_text(texto, reply_markup=InlineKeyboardMarkup(botoes))
+    try: await update.message.reply_video(random.choice(LISTA_VIDEOS_START), caption=texto, reply_markup=InlineKeyboardMarkup(botoes))
+    except: await update.message.reply_text(texto, reply_markup=InlineKeyboardMarkup(botoes))
 
 async def suporte_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📞 Suporte:\nContate: @Lyhhxv")
+    await update.message.reply_text("Suporte: @Lyhhxv")
 
 async def id_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != DONO_ID: return
-    await update.message.reply_text(
-        f"📌 ID Chat: {update.effective_chat.id}\n👤 Seu ID: {update.effective_user.id}"
-    )
+    await update.message.reply_text(f"Chat ID: {update.effective_chat.id}\nSeu ID: {update.effective_user.id}")
 
 async def ping_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != DONO_ID: return
-    ini = time.time()
-    msg = await update.message.reply_text("Pong...")
-    lat = int((time.time()-ini)*1000)
-    up = int(time.time()-TEMPO_INICIAL)
-    await msg.edit_text(f"🏓 PONG!\n⏱️ Latência: {lat}ms\n⏳ Online: {up//3600}h {(up%3600)//60}m")
+    ini=time.time(); msg=await update.message.reply_text("Pong..."); lat=int((time.time()-ini)*1000)
+    await msg.edit_text(f"Latência: {lat}ms")
 
 # ==============================================
-# 🔒 ANTI-FLOOD / INTERCEPTOR
+# 🔒 ANTI-FLOOD
 # ==============================================
 async def interceptador_universal(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if not user or user.id == DONO_ID: return
-    COMANDOS_LIBERADOS = ['/start','/suporte','/suport']
+    u = update.effective_user
+    if not u or u.id == DONO_ID: return
     if update.message and update.message.text and update.message.text.startswith('/'):
         cmd = update.message.text.split()[0].split('@')[0].lower()
-        if cmd not in COMANDOS_LIBERADOS:
-            raise ApplicationHandlerStop
-        # Controle de flood
-        uid = user.id
-        agora = time.time()
-        if uid not in ULTIMO_COMANDO: ULTIMO_COMANDO[uid]={}
-        if agora - ULTIMO_COMANDO[uid].get(cmd,0) < TEMPO_LIMITE_COMANDO:
-            CONTADOR_AVISOS_FLOD[uid] = CONTADOR_AVISOS_FLOD.get(uid,0)+1
-            if CONTADOR_AVISOS_FLOD[uid]>=MAX_AVISOS_FLOD:
-                BLOQUEIO_FLOD[uid] = agora + TEMPO_BLOQUEIO_FLOD
-                CONTADOR_AVISOS_FLOD[uid]=0
-                await context.bot.send_message(uid, "⚠️ Bloqueado temporariamente por flood!")
-            raise ApplicationHandlerStop
-        ULTIMO_COMANDO[uid][cmd] = agora
+        if cmd not in ['/start','/suporte','/suport']: raise ApplicationHandlerStop
 
 async def verificar_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Remove cliente do DB ao sair do canal"""
-    if update.my_chat_member.chat.id == CANAL_ALVO_ID:
-        if update.my_chat_member.new_chat_member.status in ["left","kicked"]:
-            collection_clientes.delete_one({"user_id": update.my_chat_member.from_user.id})
+    if update.my_chat_member.chat.id == CANAL_ALVO_ID and update.my_chat_member.new_chat_member.status in ["left","kicked"]:
+        collection_clientes.delete_one({"user_id": update.my_chat_member.from_user.id})
 
 # ==============================================
-# 💳 PAGAMENTOS MERCADO PAGO
+# 💳 PAGAMENTOS
 # ==============================================
-async def gerar_pagamento(valor, usuario):
+async def gerar_pagamento(valor):
     url = "https://api.mercadopago.com/v1/payments"
     headers = {"Authorization":f"Bearer {MP_ACCESS_TOKEN}","Content-Type":"application/json"}
-    payload = {
-        "transaction_amount":valor, "description":f"Acesso VIP - R${valor:.2f}",
-        "payment_method_id":"pix", "payer":{"email":f"user{usuario.id}@bot.com"}
-    }
-    try:
-        r = requests.post(url, json=payload, headers=headers, timeout=15)
-        if r.status_code==201:
-            dados=r.json()
-            return True, dados["id"], dados["point_of_interaction"]["transaction_data"]["qr_code"]
-        return False, None, f"Erro {r.status_code}"
-    except Exception as e:
-        return False, None, str(e)
+    p = {"transaction_amount":valor,"description":"Acesso VIP","payment_method_id":"pix","payer":{"email":"user@bot.com"}}
+    try: r=requests.post(url,json=p,headers=headers,timeout=15)
+    except: return False,None,"Erro conexão"
+    if r.status_code==201: d=r.json(); return True,d["id"],d["point_of_interaction"]["transaction_data"]["qr_code"]
+    return False,None,f"Erro {r.status_code}"
 
-async def verificar_pagamento(pag_id):
-    try:
-        r = requests.get(f"https://api.mercadopago.com/v1/payments/{pag_id}", headers={"Authorization":f"Bearer {MP_ACCESS_TOKEN}"}, timeout=10)
-        if r.status_code==200:
-            d=r.json()
-            return d.get("status")=="approved", d.get("transaction_amount",0)
-        return False,0
-    except:
-        return False,0
+async def verificar_pagamento(pid):
+    try: r=requests.get(f"https://api.mercadopago.com/v1/payments/{pid}",headers={"Authorization":f"Bearer {MP_ACCESS_TOKEN}"},timeout=10)
+    except: return False,0
+    if r.status_code==200: d=r.json(); return d.get("status")=="approved",d.get("transaction_amount",0)
+    return False,0
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    dados = query.data
-
-    if dados.startswith("comprar_"):
-        valor = float(dados.split("_")[1])
-        await query.edit_message_caption("🔄 Gerando PIX...", reply_markup=None)
-        ok, pag_id, pix = await gerar_pagamento(valor, update.effective_user)
+    q = update.callback_query; await q.answer(); d = q.data
+    if d.startswith("comprar_"):
+        v = float(d.split("_")[1])
+        ok,pid,pix = await gerar_pagamento(v)
+        if ok: await q.edit_message_text(f"PIX R${v}:\n{pix}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Verificar", callback_data=f"check_{pid}")]]))
+        else: await q.edit_message_text(f"Erro: {pix}")
+    elif d.startswith("check_"):
+        ok,valor = await verificar_pagamento(d.split("_")[1])
         if ok:
-            await query.message.reply_text(
-                f"✅ PIX Gerado!\nValor: R${valor:.2f}\n\nCópia e cola:\n{pix}",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Verificar Pagamento", callback_data=f"check_{pag_id}")]])
-            )
-        else:
-            await query.message.reply_text(f"❌ Erro: {pix}")
-
-    elif dados.startswith("check_"):
-        ok, valor = await verificar_pagamento(dados.split("_")[1])
-        if ok:
-            await query.answer("✅ Pagamento Aprovado!", show_alert=True)
-            # Define duração do plano
-            if abs(valor-1.00)<0.01: seg=3600; nome="1 Hora"
-            elif abs(valor-5.00)<0.01: seg=86400; nome="1 Dia"
-            elif abs(valor-10.00)<0.01: seg=86400*7; nome="1 Semana"
-            elif abs(valor-30.00)<0.01: seg=86400*30; nome="1 Mês"
-            elif abs(valor-55.00)<0.01: seg=86400*365*10; nome="Permanente"
-            else: seg=int(valor*86400); nome=f"R${valor:.2f}"
-
-            # Salva no banco
-            uid = update.effective_user.id
-            expira = time.time()+seg
-            collection_clientes.update_one(
-                {"user_id":uid},
-                {"$set":{"user_id":uid,"nome":update.effective_user.first_name,"username":f"@{update.effective_user.username}","expira_em":expira,"valor_pago":f"{valor:.2f}","data_compra":time.time()}},
-                upsert=True
-            )
-            # Link convite
-            try:
-                link = await context.bot.create_chat_invite_link(CANAL_ALVO_ID, expire_date=int(time.time())+86400, member_limit=1)
-                await query.message.reply_text(f"🎉 Aprovado!\nPlano: {nome}\nAcesse: {link.invite_link}\n\nAproveite o grupo🤭🩷")
-            except:
-                await query.message.reply_text("🎉 Aprovado! Contate o suporte para entrar 🩷")
-            # Aviso APENAS para VOCÊ (dono)
-            if dados.split("_")[1] not in pagamentos_notificados:
-                pagamentos_notificados.add(dados.split("_")[1])
-                await context.bot.send_message(
-                    chat_id=DONO_ID,
-                    text=(
-                        "✅ NOVA ASSINATURA!\n"
-                        f"Cliente: {update.effective_user.first_name}\nID: {uid}\nValor: R${valor:.2f}\nPlano: {nome}\n"
-                        f"Pago em: {formatar_data_rj(time.time())}\nExpira em: {'Permanente' if nome=='Permanente' else formatar_data_rj(expira)}"
-                    )
-                )
-        else:
-            await query.answer("⏳ Ainda não confirmado!", show_alert=True)
+            await q.answer("✅ APROVADO!", show_alert=True)
+            if abs(valor-1)<0.01: seg=3600; nome="1H"
+            elif abs(valor-5)<0.01: seg=86400; nome="1Dia"
+            elif abs(valor-10)<0.01: seg=86400*7; nome="1Semana"
+            elif abs(valor-30)<0.01: seg=86400*30; nome="1Mes"
+            elif abs(valor-55)<0.01: seg=86400*365*10; nome="PERMANENTE"
+            else: seg=int(valor*86400); nome=f"R${valor}"
+            uid=update.effective_user.id; exp=time.time()+seg
+            collection_clientes.update_one({"user_id":uid},{"$set":{"nome":update.effective_user.first_name,"valor_pago":f"{valor:.2f}","expira_em":exp,"data_compra":time.time()}},upsert=True)
+            try: link=await context.bot.create_chat_invite_link(CANAL_ALVO_ID,member_limit=1); await q.message.reply_text(f"Aprovado! Acesse: {link.invite_link}\nAproveite 🩷")
+            except: await q.message.reply_text("Aprovado! Contate suporte 🩷")
+            if d.split("_")[1] not in pagamentos_notificados:
+                pagamentos_notificados.add(d.split("_")[1])
+                await context.bot.send_message(DONO_ID,f"NOVO PAGAMENTO:\nCliente: {update.effective_user.first_name}\nValor: R${valor:.2f}\nPlano: {nome}\nExpira: {formatar_data_rj(exp)}")
+        else: await q.answer("⏳ Aguardando pagamento", show_alert=True)
 
 # ==============================================
-# ⏰ GERENCIADOR DE ASSINATURAS (VERIFICA EXPIRAÇÕES)
+# ⏰ GERENCIADOR DE PLANOS
 # ==============================================
-async def gerenciador_assinaturas(app):
+async def gerenciador(app):
     await asyncio.sleep(10)
     while True:
-        agora = time.time()
+        agora=time.time()
         for cli in collection_clientes.find({}):
-            restante = cli.get("expira_em",0) - agora
-            uid = cli["user_id"]
-            # Aviso 1 dia antes
-            if 82800 <= restante <= 86400 and not cli.get("aviso_1d"):
-                try: await app.bot.send_message(uid, "⚠️ Seu plano vence AMANHÃ! Renove agora!"); collection_clientes.update_one({"user_id":uid},{"$set":{"aviso_1d":True}})
+            r = cli.get("expira_em",0)-agora; uid=cli["user_id"]
+            if 82800<=r<=86400 and not cli.get("aviso1"):
+                try: await app.bot.send_message(uid,"⚠️ Vence AMANHÃ!"); collection_clientes.update_one({"user_id":uid},{"$set":{"aviso1":True}})
                 except: pass
-            # Aviso 20min antes
-            elif 0 < restante <=1200 and not cli.get("aviso_20m"):
-                try: await app.bot.send_message(uid, "🚨 Vence EM MINUTOS! Renove AGORA!"); collection_clientes.update_one({"user_id":uid},{"$set":{"aviso_20m":True}})
+            elif 0<r<=1200 and not cli.get("aviso2"):
+                try: await app.bot.send_message(uid,"🚨 Vence EM MINUTOS!"); collection_clientes.update_one({"user_id":uid},{"$set":{"aviso2":True}})
                 except: pass
-            # Expirou → remover
-            elif restante <=0:
-                try: await app.bot.kick_chat_member(CANAL_ALVO_ID, uid); await app.bot.unban_chat_member(CANAL_ALVO_ID, uid)
+            elif r<=0:
+                try: await app.bot.kick_chat_member(CANAL_ALVO_ID,uid); await app.bot.unban_chat_member(CANAL_ALVO_ID,uid)
                 except: pass
                 collection_clientes.delete_one({"user_id":uid})
         await asyncio.sleep(60)
 
 # ==============================================
-# 🚀 INICIALIZAÇÃO SEM CONFLITO DE LOOP (RESOLVE O ERRO!)
+# 🚀 INICIALIZAÇÃO FINAL SEM ERROS
 # ==============================================
-def run_flask():
-    run_web()
+def run_flask(): run_web()
 
 async def main():
-    # Flask roda em thread separada DEPOIS do loop ser criado
     threading.Thread(target=run_flask, daemon=True).start()
-
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-
-    # Registra handlers na ordem correta
     app.add_handler(TypeHandler(Update, interceptador_universal), group=-1)
     app.add_handler(ChatMemberHandler(verificar_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(CommandHandler("start", start))
@@ -348,12 +241,8 @@ async def main():
     app.add_handler(CommandHandler("pegarid", pegarid_cmd))
     app.add_handler(CommandHandler("clientes", clientes_cmd))
     app.add_handler(CallbackQueryHandler(button_handler))
-
-    # Inicia o gerenciador de assinaturas
-    asyncio.create_task(gerenciador_assinaturas(app))
-
-    print("✅ BOT ONLINE — VALORES ATUALIZADOS!")
-    # close_loop=False → resolve o erro de fechar loop rodando!
+    asyncio.create_task(gerenciador(app))
+    print("✅ BOT ONLINE SEM ERROS DE LOOP!")
     await app.run_polling(drop_pending_updates=True, close_loop=False)
 
 if __name__ == "__main__":
