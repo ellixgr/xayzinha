@@ -215,12 +215,13 @@ async def gerenciador_assinaturas(app):
                 collection_clientes.delete_one({"user_id":uid})
         await asyncio.sleep(60)
 
-# ✅ FUNÇÃO DE INICIALIZAÇÃO CORRETA (executa DEPOIS do loop estar ativo)
+# ✅ FUNÇÃO DE INICIALIZAÇÃO CORRETA
 async def inicializar_tarefas(app):
+    # SOMENTE AQUI CRIA A TAREFA — loop já está rodando!
     asyncio.create_task(gerenciador_assinaturas(app))
 
 # ==============================================
-# 🚀 INICIO SEM ERRO DE LOOP
+# 🚀 INICIO — SEM LINHA ERRADA NO BLOCO PRINCIPAL!
 # ==============================================
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
@@ -235,7 +236,7 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("clientes", clientes_cmd))
     app.add_handler(CallbackQueryHandler(botoes_callback))
 
-    # ✅ AQUI É O LUGAR CERTO! O loop já está rodando quando executa
+    # ✅ ATRIBUI A FUNÇÃO — NÃO CHAMA create_task AQUI!
     app.post_init = inicializar_tarefas
 
     print("✅ BOT ONLINE SEM ERROS DE LOOP! 🚀")
