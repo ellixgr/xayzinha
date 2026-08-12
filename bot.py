@@ -16,7 +16,9 @@ from telegram.ext import (
     ChatMemberHandler
 )
 
-# VARIÁVEIS DE AMBIENTE
+# ==============================================
+# ✅ VARIÁVEIS DE AMBIENTE NO RENDER
+# ==============================================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 MP_ACCESS_TOKEN = os.environ.get("MP_ACCESS_TOKEN")
 DONO_ID = int(os.environ.get("DONO_ID", 7711945457))
@@ -24,8 +26,9 @@ CANAL_ALVO_ID = int(os.environ.get("CANAL_ALVO_ID", -1004399892914))
 MONGO_URI = os.environ.get("MONGO_URI")
 
 if not TELEGRAM_TOKEN or not MONGO_URI:
-    raise SystemExit("❌ Defina TELEGRAM_TOKEN e MONGO_URI nas variáveis!")
+    raise SystemExit("❌ ERRO: Adicione TELEGRAM_TOKEN e MONGO_URI nas variáveis!")
 
+# Seus vídeos
 LISTA_VIDEOS_START = [
     "BAACAgEAAxkBAAIEaGpypkNQUJJljEnJb7HL6E8_jI9wAAKFBgACCyKZR-8RZtV8X4rJPQQ",
     "BAACAgQAAxkDAAICGmpoPJTXgCHfxtZabyU-4BF-LQ2aAAIyCgACN9NMU1DMn3zufwakPQQ",
@@ -36,7 +39,7 @@ LISTA_VIDEOS_START = [
     "BAACAgEAAxkBAAIElGpysAVDwH-LYNh9sODcX3lBl7O-AAKMBgACCyKZR3ERh8tK65nkPQQ"
 ]
 
-# CONEXÃO MONGO
+# Conexão MongoDB
 try:
     mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
     db = mongo_client["sanizinhabot_db"]
@@ -48,7 +51,9 @@ except Exception as e:
 FUSO_RJ = timezone(timedelta(hours=-3))
 pagamentos_notificados = set()
 
-# FUNÇÕES AUXILIARES
+# ==============================================
+# ⚙️ FUNÇÕES AUXILIARES
+# ==============================================
 def formatar_tempo_restante(segundos):
     if segundos <= 0: return "Expirado"
     if segundos >= 315360000: return "PERMANENTE/VITALÍCIO"
@@ -58,118 +63,198 @@ def formatar_tempo_restante(segundos):
 def formatar_data_rj(timestamp):
     return datetime.fromtimestamp(timestamp, tz=FUSO_RJ).strftime("%d/%m/%Y às %H:%M")
 
-# COMANDOS
+# ==============================================
+# 📋 COMANDOS ADMIN
+# ==============================================
 async def pegarid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != DONO_ID: return
-    video = update.message.reply_to_message.video if (update.message.reply_to_message and update.message.reply_to_message.video) else update.message.video
-    if video: await update.message.reply_text(f"✅ FILE_ID:\n{video.file_id}\nDuração: {video.duration}s")
-    else: await update.message.reply_text("⚠️ Responda/envie um vídeo com /pegarid")
+    video = None
+    if update.message.reply_to_message and update.message.reply_to_message.video:
+        video = update.message.reply_to_message.video
+    elif update.message.video:
+        video = update.message.video
+    if video:
+        await update.message.reply_text(f"✅ FILE_ID:\n\n{video.file_id}\nDuração: {video.duration} segundos")
+    else:
+        await update.message.reply_text("⚠️ Responda/envie um vídeo com /pegarid")
 
 async def clientes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != DONO_ID: return
-    agora=time.time(); lista=list(collection_clientes.find({}))
-    texto=f"📋 CLIENTES ({len(lista)}):\n\n"
-    for i,c in enumerate(lista,1):
-        texto += f"{i}. {c.get('nome','?')}\nID: {c['user_id']}\nValor: R${c.get('valor_pago','0')}\nExpira: {formatar_tempo_restante(c.get('expira_em',0)-agora)}\n\n"
+    agora = time.time()
+    lista = list(collection_clientes.find({}))
+    texto = f"📋 LISTA CLIENTES ({len(lista)}):\n\n"
+    for i, cli in enumerate(lista, 1):
+        texto += (
+            f"{i}. {cli.get('nome', 'Desconhecido')}\n"
+            f"🆔 ID: {cli['user_id']}\n"
+            f"💰 Valor: R${cli.get('valor_pago', 'Não registrado')}\n"
+            f"⏳ Expira: {formatar_tempo_restante(cli.get('expira_em',0)-agora)}\n\n"
+        )
     await update.message.reply_text(texto)
 
+async def id_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != DONO_ID: return
+    await update.message.reply_text(f"👤 Seu ID: {update.effective_user.id}\n💬 Chat ID: {update.effective_chat.id}")
+
+async def ping_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != DONO_ID: return
+    inicio = time.time()
+    msg = await update.message.reply_text("🏓 Calculando...")
+    lat = int((time.time() - inicio)*1000)
+    await msg.edit_text(f"🏓 PONG! Latência: {lat}ms")
+
+# ==============================================
+# 🛒 VENDAS E PAGAMENTOS
+# ==============================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private": return
-    texto="Escolha seu plano VIP:\nSuporte: @Lyhhxv"
-    botoes=[
-        [InlineKeyboardButton("1H → R$1", callback_data="comprar_1")],
-        [InlineKeyboardButton("1D → R$5", callback_data="comprar_5")],
-        [InlineKeyboardButton("1Sem → R$10", callback_data="comprar_10")],
-        [InlineKeyboardButton("1Mês → R$30", callback_data="comprar_30")],
-        [InlineKeyboardButton("PERM → R$55", callback_data="comprar_55")]
+    texto = "𝗧𝗢𝗗𝗢𝗦 𝗢𝗦 𝗖𝗢𝗡𝗧𝗘𝗨𝗗𝗢𝗦 𝗩𝗔𝗭𝗔𝗗0𝗦 🤫\nEscolha seu plano VIP:\nSuporte: @Lyhhxv"
+    botoes = [
+        [InlineKeyboardButton("1 HORA → R$ 1,00🔥", callback_data="comprar_1")],
+        [InlineKeyboardButton("1 DIA → R$ 5,00", callback_data="comprar_5")],
+        [InlineKeyboardButton("1 SEMANA → R$ 10,00", callback_data="comprar_10")],
+        [InlineKeyboardButton("1 MÊS → R$ 30,00", callback_data="comprar_30")],
+        [InlineKeyboardButton("PERMANENTE → R$ 55,00", callback_data="comprar_55")]
     ]
-    try: await update.message.reply_video(random.choice(LISTA_VIDEOS_START), caption=texto, reply_markup=InlineKeyboardMarkup(botoes))
-    except: await update.message.reply_text(texto, reply_markup=InlineKeyboardMarkup(botoes))
+    try:
+        await update.message.reply_video(random.choice(LISTA_VIDEOS_START), caption=texto, reply_markup=InlineKeyboardMarkup(botoes))
+    except:
+        await update.message.reply_text(texto, reply_markup=InlineKeyboardMarkup(botoes))
 
 async def suporte_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📞 Suporte: @Lyhhxv")
 
-async def id_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != DONO_ID: return
-    await update.message.reply_text(f"Chat: {update.effective_chat.id}\nSeu ID: {update.effective_user.id}")
+async def gerar_pagamento(valor):
+    url = "https://api.mercadopago.com/v1/payments"
+    headers = {"Authorization": f"Bearer {MP_ACCESS_TOKEN}", "Content-Type": "application/json"}
+    payload = {
+        "transaction_amount": valor,
+        "description": "Acesso VIP Grupo",
+        "payment_method_id": "pix",
+        "payer": {"email": "cliente@botvip.com"}
+    }
+    try:
+        r = requests.post(url, json=payload, headers=headers, timeout=15)
+    except Exception as e:
+        return False, None, f"Erro conexão: {str(e)}"
+    if r.status_code == 201:
+        dados = r.json()
+        return True, dados["id"], dados["point_of_interaction"]["transaction_data"]["qr_code"]
+    return False, None, f"Erro {r.status_code}"
 
-async def ping_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != DONO_ID: return
-    t=time.time(); msg=await update.message.reply_text("🏓..."); await msg.edit_text(f"🏓 PONG! {int((time.time()-t)*1000)}ms")
+async def verificar_pagamento(pid):
+    try:
+        r = requests.get(f"https://api.mercadopago.com/v1/payments/{pid}", headers={"Authorization": f"Bearer {MP_ACCESS_TOKEN}"}, timeout=10)
+    except:
+        return False, 0
+    if r.status_code == 200:
+        dados = r.json()
+        return dados.get("status") == "approved", dados.get("transaction_amount", 0)
+    return False, 0
 
-# ANTI-FLOOD
+async def botoes_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    dados = q.data
+
+    if dados.startswith("comprar_"):
+        valor = float(dados.split("_")[1])
+        ok, pid, pix = await gerar_pagamento(valor)
+        if ok:
+            await q.edit_message_text(
+                f"✅ PIX GERADO COM SUCESSO!\n💸 Valor: R$ {valor:.2f}\n\n{pix}",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Verificar Pagamento", callback_data=f"check_{pid}")]])
+            )
+        else:
+            await q.edit_message_text(f"❌ Erro ao gerar: {pix}")
+
+    elif dados.startswith("check_"):
+        ok, valor_pago = await verificar_pagamento(dados.split("_")[1])
+        if ok:
+            await q.answer("✅ PAGAMENTO APROVADO!", show_alert=True)
+            # Define duração do plano
+            if abs(valor_pago - 1) < 0.05: seg, nome = 3600, "1 Hora"
+            elif abs(valor_pago - 5) < 0.05: seg, nome = 86400, "1 Dia"
+            elif abs(valor_pago - 10) < 0.05: seg, nome = 86400*7, "1 Semana"
+            elif abs(valor_pago - 30) < 0.05: seg, nome = 86400*30, "1 Mês"
+            elif abs(valor_pago - 55) < 0.05: seg, nome = 3153600000, "PERMANENTE/VITALÍCIO"
+            else: seg, nome = int(valor_pago*86400), f"R${valor_pago:.2f}"
+
+            uid = update.effective_user.id
+            expira = time.time() + seg
+
+            # Salva no banco
+            collection_clientes.update_one(
+                {"user_id": uid},
+                {"$set": {
+                    "nome": update.effective_user.first_name,
+                    "username": f"@{update.effective_user.username}" if update.effective_user.username else "Não informado",
+                    "valor_pago": f"{valor_pago:.2f}",
+                    "expira_em": expira,
+                    "data_compra": time.time()
+                }},
+                upsert=True
+            )
+
+            # Envia link do grupo
+            try:
+                link = await context.bot.create_chat_invite_link(CANAL_ALVO_ID, expire_date=int(time.time())+86400, member_limit=1)
+                await q.message.reply_text(f"🎉 ACESSO LIBERADO!\n✅ Plano: {nome}\n🔗 Link: {link.invite_link}\nAproveite muito 🩷🤭")
+            except:
+                await q.message.reply_text("🎉 Aprovado! Contate o suporte para receber o link 🩷")
+
+            # Avisa você (dono)
+            if dados.split("_")[1] not in pagamentos_notificados:
+                pagamentos_notificados.add(dados.split("_")[1])
+                await context.bot.send_message(
+                    DONO_ID,
+                    f"✅ NOVA VENDA CONFIRMADA!\n"
+                    f"👤 Cliente: {update.effective_user.first_name}\n"
+                    f"🆔 ID: {uid}\n"
+                    f"💸 Valor: R${valor_pago:.2f}\n"
+                    f"📦 Plano: {nome}\n"
+                    f"📅 Expira: {'PERMANENTE' if seg>315360000 else formatar_data_rj(expira)}"
+                )
+        else:
+            await q.answer("⏳ Aguardando confirmação do pagamento...", show_alert=True)
+
+# ==============================================
+# 🔒 ANTI-FLOOD + GERENCIADOR
+# ==============================================
 async def interceptador(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u=update.effective_user
-    if not u or u.id==DONO_ID: return
+    u = update.effective_user
+    if not u or u.id == DONO_ID: return
     if update.message and update.message.text and update.message.text.startswith('/'):
-        cmd=update.message.text.split()[0].lower()
+        cmd = update.message.text.split()[0].lower()
         if cmd not in ['/start','/suporte']: raise ApplicationHandlerStop
 
 async def verificar_saida(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.my_chat_member.chat.id==CANAL_ALVO_ID and update.my_chat_member.new_chat_member.status in ["left","kicked"]:
+    if update.my_chat_member.chat.id == CANAL_ALVO_ID and update.my_chat_member.new_chat_member.status in ["left","kicked"]:
         collection_clientes.delete_one({"user_id": update.my_chat_member.from_user.id})
 
-# PAGAMENTOS MERCADO PAGO
-async def gerar_pagamento(valor):
-    url="https://api.mercadopago.com/v1/payments"
-    headers={"Authorization":f"Bearer {MP_ACCESS_TOKEN}","Content-Type":"application/json"}
-    payload={"transaction_amount":valor,"description":"Acesso VIP","payment_method_id":"pix","payer":{"email":"cliente@botvip.com"}}
-    try: r=requests.post(url,json=payload,headers=headers,timeout=15)
-    except: return False,None,"Erro conexão"
-    if r.status_code==201: d=r.json(); return True,d["id"],d["point_of_interaction"]["transaction_data"]["qr_code"]
-    return False,None,f"Erro {r.status_code}"
-
-async def verificar_pagamento(pid):
-    try: r=requests.get(f"https://api.mercadopago.com/v1/payments/{pid}",headers={"Authorization":f"Bearer {MP_ACCESS_TOKEN}"},timeout=10)
-    except: return False,0
-    if r.status_code==200: d=r.json(); return d.get("status")=="approved",d.get("transaction_amount",0)
-    return False,0
-
-async def botoes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q=update.callback_query; await q.answer(); d=q.data
-    if d.startswith("comprar_"):
-        v=float(d.split("_")[1])
-        ok,pid,pix=await gerar_pagamento(v)
-        if ok: await q.edit_message_text(f"✅ PIX R${v}\n{pix}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Verificar", callback_data=f"check_{pid}")]]))
-        else: await q.edit_message_text(f"❌ {pix}")
-    elif d.startswith("check_"):
-        ok,valor=await verificar_pagamento(d.split("_")[1])
-        if ok:
-            await q.answer("✅ APROVADO!", show_alert=True)
-            if abs(valor-1)<0.01: seg=3600; nome="1 Hora"
-            elif abs(valor-5)<0.01: seg=86400; nome="1 Dia"
-            elif abs(valor-10)<0.01: seg=86400*7; nome="1 Semana"
-            elif abs(valor-30)<0.01: seg=86400*30; nome="1 Mês"
-            elif abs(valor-55)<0.01: seg=86400*3650; nome="PERMANENTE"
-            else: seg=int(valor*86400); nome=f"R${valor}"
-            uid=update.effective_user.id; exp=time.time()+seg
-            collection_clientes.update_one({"user_id":uid},{"$set":{"nome":update.effective_user.first_name,"username":f"@{update.effective_user.username}","valor_pago":f"{valor:.2f}","expira_em":exp,"data_compra":time.time()}},upsert=True)
-            try: link=await context.bot.create_chat_invite_link(CANAL_ALVO_ID, expire_date=int(time.time())+86400, member_limit=1); await q.message.reply_text(f"🎉 LIBERADO!\nPlano: {nome}\nLink: {link.invite_link}\nAproveite 🩷")
-            except: await q.message.reply_text("🎉 Aprovado! Contate suporte 🩷")
-            if d.split("_")[1] not in pagamentos_notificados:
-                pagamentos_notificados.add(d.split("_")[1])
-                await context.bot.send_message(DONO_ID,f"✅ NOVA VENDA:\nCliente: {update.effective_user.first_name}\nValor: R${valor:.2f}\nExpira: {formatar_data_rj(exp) if seg<315360000 else 'PERMANENTE'}")
-        else: await q.answer("⏳ Aguardando...")
-
-# GERENCIADOR DE EXPIRAÇÕES
-async def gerenciar(app):
+async def gerenciar_expiracoes(app):
     await asyncio.sleep(10)
     while True:
-        agora=time.time()
+        agora = time.time()
         for cli in collection_clientes.find({}):
-            r=cli.get("expira_em",0)-agora; uid=cli["user_id"]
-            if r<=0:
-                try: await app.bot.kick_chat_member(CANAL_ALVO_ID,uid); await app.bot.unban_chat_member(CANAL_ALVO_ID,uid)
+            restante = cli.get("expira_em", 0) - agora
+            uid = cli["user_id"]
+            if restante <= 0:
+                try: await app.bot.kick_chat_member(CANAL_ALVO_ID, uid); await app.bot.unban_chat_member(CANAL_ALVO_ID, uid)
                 except: pass
-                collection_clientes.delete_one({"user_id":uid})
+                collection_clientes.delete_one({"user_id": uid})
         await asyncio.sleep(60)
 
 async def inicializar(app):
-    asyncio.create_task(gerenciar(app))
+    asyncio.create_task(gerenciar_expiracoes(app))
 
-# INICIO
+# ==============================================
+# 🚀 INICIO SEM ERROS!
+# ==============================================
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
+    # Registra handlers
     app.add_handler(TypeHandler(Update, interceptador), group=-1)
     app.add_handler(ChatMemberHandler(verificar_saida, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(CommandHandler("start", start))
@@ -178,7 +263,9 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("ping", ping_cmd))
     app.add_handler(CommandHandler("pegarid", pegarid_cmd))
     app.add_handler(CommandHandler("clientes", clientes_cmd))
-    app.add_handler(CallbackQueryHandler(botoes))
+    app.add_handler(CallbackQueryHandler(botoes_callback))
+
     app.post_init = inicializar
-    print("✅ BOT ONLINE! 🚀")
+
+    print("✅ BOT ONLINE E FUNCIONANDO! 🚀")
     app.run_polling(drop_pending_updates=True)
