@@ -219,7 +219,7 @@ async def inicializar_tarefas(app):
     asyncio.create_task(gerenciador_assinaturas(app))
 
 # ==============================================
-# 🚀 INICIO COM TIMEOUTS SEGUROS
+# 🚀 INICIO CORRIGIDO SEM ERRO DE PARÂMETRO
 # ==============================================
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
@@ -237,11 +237,7 @@ if __name__ == "__main__":
     app.post_init = inicializar_tarefas
 
     print("✅ BOT ONLINE SEM ERROS DE LOOP! 🚀")
-    # TIMEOUTS ESSENCIAIS PARA NÃO CRASHAR NO RENDER
+    # REMOVI OS PARÂMETROS INVÁLIDOS QUE CAUSAVAM O ERRO!
     app.run_polling(
-        drop_pending_updates=True,
-        read_timeout=60,
-        write_timeout=60,
-        connect_timeout=60,
-        pool_timeout=60
+        drop_pending_updates=True
     )
