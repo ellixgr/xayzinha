@@ -518,14 +518,17 @@ async def gerenciador_assinaturas(application):
             print(f"Erro gerenciador: {e}")
         await asyncio.sleep(60)
 
-def run_background_loop(app):
-    asyncio.create_task(gerenciador_assinaturas(app))
+# 🔧 INICIALIZAÇÃO CORRIGIDA SEM CONFLITO DE LOOP
+def run_flask():
+    run_web()
 
 async def main():
-    # Flask roda em thread separada
-    threading.Thread(target=run_web, daemon=True).start()
-    # Bot fica na thread principal (resolve erro de sinal)
+    # Flask inicia em thread separada DEPOIS do loop ser criado
+    threading.Thread(target=run_flask, daemon=True).start()
+
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
+    # Adiciona todos os handlers
     app.add_handler(TypeHandler(Update, interceptador_universal), group=-1)
     app.add_handler(ChatMemberHandler(verificar_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(CommandHandler("start", start))
@@ -536,10 +539,13 @@ async def main():
     app.add_handler(CommandHandler("pegarid", pegarid_cmd))
     app.add_handler(CommandHandler("clientes", clientes_cmd))
     app.add_handler(CallbackQueryHandler(button_handler))
-    # Inicia gerenciador sem conflito de loop
-    run_background_loop(app)
-    print("BOT ONLINE — VALORES ATUALIZADOS!")
-    await app.run_polling(drop_pending_updates=True)
+
+    # Inicia tarefa do gerenciador DENTRO do loop principal
+    asyncio.create_task(gerenciador_assinaturas(app))
+
+    print("✅ BOT ONLINE — VALORES ATUALIZADOS!")
+    # Roda o polling SEM conflito — deixa o bot gerenciar o loop corretamente
+    await app.run_polling(drop_pending_updates=True, close_loop=False)
 
 if __name__ == "__main__":
     asyncio.run(main())
