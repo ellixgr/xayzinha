@@ -89,7 +89,7 @@ def formatar_tempo_restante(segundos):
     return " ".join(partes) if partes else "Menos de 1m"
 
 def formatar_data_rj(timestamp):
-    return datetime.fromtimestamp(timestamp, tz=FUSO_RJ).strftime("%d/%m/%Y as %H:%M")
+    return datetime.fromtimestamp(timestamp, tz=FUSO_RJ).strftime("%d/%m/%Y às %H:%M")
 
 async def pegarid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != DONO_ID:
@@ -215,6 +215,10 @@ async def verificar_my_chat_member(update: Update, context: ContextTypes.DEFAULT
         return
     chat = result.chat
     new_status = result.new_chat_member.status
+    if chat.id == CANAL_ALVO_ID:
+        usuario_id = result.from_user.id
+        if new_status in ["left", "kicked", "restricted"]:
+            collection_clientes.delete_one({"user_id": usuario_id})
     if chat.type in ["group", "supergroup", "channel"]:
         try:
             if new_status in ["member", "administrator"]:
@@ -514,15 +518,14 @@ async def gerenciador_assinaturas(application):
             print(f"Erro gerenciador: {e}")
         await asyncio.sleep(60)
 
-def run_background_loop(application):
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(gerenciador_assinaturas(application))
+def run_background_loop(app):
+    asyncio.create_task(gerenciador_assinaturas(app))
 
-def main():
+async def main():
+    # Flask roda em thread separada
     threading.Thread(target=run_web, daemon=True).start()
+    # Bot fica na thread principal (resolve erro de sinal)
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    threading.Thread(target=run_background_loop, args=(app,), daemon=True).start()
     app.add_handler(TypeHandler(Update, interceptador_universal), group=-1)
     app.add_handler(ChatMemberHandler(verificar_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(CommandHandler("start", start))
@@ -533,8 +536,10 @@ def main():
     app.add_handler(CommandHandler("pegarid", pegarid_cmd))
     app.add_handler(CommandHandler("clientes", clientes_cmd))
     app.add_handler(CallbackQueryHandler(button_handler))
+    # Inicia gerenciador sem conflito de loop
+    run_background_loop(app)
     print("BOT ONLINE — VALORES ATUALIZADOS!")
-    app.run_polling(drop_pending_updates=False)
+    await app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     asyncio.run(main())
