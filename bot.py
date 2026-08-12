@@ -274,7 +274,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]))
 
 # --------------------------
-# GERENCIADOR DE ASSINATURAS (REMOÇÃO AUTOMÁTICA AO EXPIRAR)
+# GERENCIADOR DE ASSINATURAS
 # --------------------------
 async def gerenciador_assinaturas(app):
     await asyncio.sleep(10)
@@ -297,26 +297,28 @@ async def gerenciador_assinaturas(app):
         await asyncio.sleep(60)
 
 # --------------------------
-# INICIALIZAÇÃO
+# INICIALIZAÇÃO (CORRIGIDA!)
 # --------------------------
-def run_bot():
-    async def bot_loop():
-        app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-        app.add_handler(TypeHandler(Update, interceptador_universal), group=-1)
-        app.add_handler(ChatMemberHandler(verificar_my_chat_member))
-        app.add_handler(CommandHandler("start", start))
-        app.add_handler(CommandHandler("suporte", suporte_cmd))
-        app.add_handler(CommandHandler("suport", suporte_cmd))
-        app.add_handler(CommandHandler("id", id_cmd))
-        app.add_handler(CommandHandler("ping", ping_cmd))
-        app.add_handler(CommandHandler("pegarid", pegarid_cmd))
-        app.add_handler(CommandHandler("clientes", clientes_cmd))
-        app.add_handler(CallbackQueryHandler(button_handler))
-        asyncio.create_task(gerenciador_assinaturas(app))
-        await app.run_polling(drop_pending_updates=True)
-    asyncio.run(bot_loop())
+def iniciar_flask():
+    app_web.run(host="0.0.0.0", port=int(os.environ.get("PORT",10000)))
+
+async def main():
+    # FLASK RODA EM THREAD SECUNDÁRIA ✅
+    threading.Thread(target=iniciar_flask, daemon=True).start()
+    # BOT FICA NA THREAD PRINCIPAL ✅ (resolve o erro de signal!)
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    app.add_handler(TypeHandler(Update, interceptador_universal), group=-1)
+    app.add_handler(ChatMemberHandler(verificar_my_chat_member))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("suporte", suporte_cmd))
+    app.add_handler(CommandHandler("suport", suporte_cmd))
+    app.add_handler(CommandHandler("id", id_cmd))
+    app.add_handler(CommandHandler("ping", ping_cmd))
+    app.add_handler(CommandHandler("pegarid", pegarid_cmd))
+    app.add_handler(CommandHandler("clientes", clientes_cmd))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    asyncio.create_task(gerenciador_assinaturas(app))
+    await app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-    threading.Thread(target=run_bot, daemon=True).start()
-    print("✅ BOT ONLINE COM python-telegram-bot 22.8!")
-    app_web.run(host="0.0.0.0", port=int(os.environ.get("PORT",10000)))
+    asyncio.run(main())
