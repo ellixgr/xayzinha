@@ -48,6 +48,7 @@ try:
     )
     db = mongo_client["sanizinhabot_db"]
     collection_clientes = db["clientes"]
+    print("✅ Conectado ao MongoDB!")
 except Exception as e:
     print(f"❌ Erro ao conectar MongoDB: {e}")
 
@@ -141,7 +142,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(botoes),
             protect_content=True
         )
-    except Exception:
+    except Exception as e:
+        print(f"Erro ao enviar vídeo: {e}")
         await update.message.reply_text(texto, reply_markup=InlineKeyboardMarkup(botoes))
 
 async def suporte_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -320,19 +322,19 @@ async def gerenciador_assinaturas(app):
         await asyncio.sleep(60) # Verifica a cada 1 minuto
 
 # ==============================================
-# 🚀 INICIALIZAÇÃO FINAL SEM ERROS!
+# 🚀 INICIALIZAÇÃO FINAL — RESOLVE NÃO RESPONDER!
 # ==============================================
 if __name__ == "__main__":
-    # Inicia o Flask do web.py em thread separada
+    # ✅ MELHORIA: Flask roda sem bloquear e sem conflito
     def iniciar_flask():
         import web
-        web.app_web.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)), use_reloader=False)
+        web.app_web.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)), use_reloader=False, debug=False)
     threading.Thread(target=iniciar_flask, daemon=True).start()
 
-    # Constrói e inicia o bot
+    # Constrói o bot
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    # Registra handlers na ordem correta
+    # Registra handlers NA ORDEM CERTA
     app.add_handler(TypeHandler(Update, interceptador_universal), group=-1)
     app.add_handler(ChatMemberHandler(verificar_saida_canal, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(CommandHandler("start", start))
@@ -344,9 +346,16 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("clientes", clientes_cmd))
     app.add_handler(CallbackQueryHandler(botoes_callback))
 
-    # ✅ CORREÇÃO CRUCIAL: Guarda referência da tarefa para NÃO ser coletada antes de executar
+    # ✅ Mantém referência da tarefa para não ser destruída
     tarefa_gerenciador = asyncio.create_task(gerenciador_assinaturas(app))
 
-    print("✅ BOT ONLINE E FUNCIONANDO SEM ERROS DE LOOP! 🚀")
-    # Método oficial estável para python-telegram-bot v22.8
-    app.run_polling(drop_pending_updates=True)
+    print("✅ BOT ONLINE E RESPONDENDO! 🚀")
+    # ✅ Configuração estável para Render: sem conflito de loop
+    app.run_polling(
+        drop_pending_updates=True,
+        close_loop=False,
+        read_timeout=30,
+        write_timeout=30,
+        connect_timeout=30,
+        pool_timeout=30
+    )
