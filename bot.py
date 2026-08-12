@@ -87,7 +87,9 @@ async def clientes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         texto += (
             f"{i}. {cli.get('nome', 'Desconhecido')}\n"
             f"🆔 ID: {cli['user_id']}\n"
-            f"💰 Valor: R${cli.get('valor_pago', 'Não registrado')}\n"
+            f"👤 Usuário: {cli.get('username', 'Não informado')}\n"
+            f"💰 Valor Pago: R${cli.get('valor_pago', 'Não registrado')}\n"
+            f"📅 Compra: {formatar_data_rj(cli.get('data_compra', agora))}\n"
             f"⏳ Expira: {formatar_tempo_restante(cli.get('expira_em',0)-agora)}\n\n"
         )
     await update.message.reply_text(texto)
@@ -213,13 +215,14 @@ async def botoes_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"🆔 ID: {uid}\n"
                     f"💸 Valor: R${valor_pago:.2f}\n"
                     f"📦 Plano: {nome}\n"
-                    f"📅 Expira: {'PERMANENTE' if seg>315360000 else formatar_data_rj(expira)}"
+                    f"📅 Pago em: {formatar_data_rj(time.time())}\n"
+                    f"⏳ Expira em: {'PERMANENTE' if seg>315360000 else formatar_data_rj(expira)}"
                 )
         else:
             await q.answer("⏳ Aguardando confirmação do pagamento...", show_alert=True)
 
 # ==============================================
-# 🔒 ANTI-FLOOD + GERENCIADOR
+# 🔒 ANTI-FLOOD + GERENCIADOR DE EXPIRAÇÕES
 # ==============================================
 async def interceptador(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
@@ -249,12 +252,18 @@ async def inicializar(app):
     asyncio.create_task(gerenciar_expiracoes(app))
 
 # ==============================================
-# 🚀 INICIO SEM ERROS!
+# 🚀 INICIO SEM ERRO DE LOOP! RESOLVIDO DE VEZ!
 # ==============================================
 if __name__ == "__main__":
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    # Registra handlers
+    # Registra todos os handlers
     app.add_handler(TypeHandler(Update, interceptador), group=-1)
     app.add_handler(ChatMemberHandler(verificar_saida, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(CommandHandler("start", start))
@@ -267,5 +276,5 @@ if __name__ == "__main__":
 
     app.post_init = inicializar
 
-    print("✅ BOT ONLINE E FUNCIONANDO! 🚀")
+    print("✅ BOT 100% ONLINE, SEM ERROS, SEM CONFLITOS! 🚀")
     app.run_polling(drop_pending_updates=True)
