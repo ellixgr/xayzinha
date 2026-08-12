@@ -21,13 +21,13 @@ from telegram.ext import (
 )
 
 # --------------------------
-# CONFIGS PRINCIPAIS
+# CONFIGS
 # --------------------------
 app_web = Flask(__name__)
 
 @app_web.route('/')
 def home():
-    return "SanizinhaBot está ONLINE e funcionando! ✅"
+    return "SanizinhaBot está ONLINE! ✅"
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 MP_ACCESS_TOKEN = os.environ.get("MP_ACCESS_TOKEN")
@@ -45,7 +45,7 @@ LISTA_VIDEOS_START = [
     "BAACAgEAAxkBAAIElGpysAVDwH-LYNh9sODcX3lBl7O-AAKMBgACCyKZR3ERh8tK65nkPQQ"
 ]
 
-# Conexão MongoDB segura e estável
+# Conexão MongoDB
 mongo_client = MongoClient(
     MONGO_URI,
     serverSelectionTimeoutMS=5000,
@@ -58,7 +58,7 @@ collection_clientes = db["clientes"]
 collection_chats = db["chats_autorizados"]
 
 TEMPO_INICIAL = time.time()
-FUSO_RJ = timezone(timedelta(hours=-3)) # Horário Rio de Janeiro CORRETO
+FUSO_RJ = timezone(timedelta(hours=-3))
 
 ULTIMO_COMANDO = {}
 CONTADOR_AVISOS_FLOD = {}
@@ -85,10 +85,10 @@ def formatar_tempo_restante(segundos):
     return " ".join(partes) if partes else "Menos de 1m"
 
 def formatar_data_rj(timestamp):
-    return datetime.fromtimestamp(timestamp, tz=FUSO_RJ).strftime("%d/%m/%Y as %H:%M")
+    return datetime.fromtimestamp(timestamp, tz=FUSO_RJ).strftime("%d/%m/%Y às %H:%M")
 
 # --------------------------
-# COMANDOS EXCLUSIVOS DO DONO
+# COMANDOS DO DONO
 # --------------------------
 async def pegarid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != DONO_ID: return
@@ -133,19 +133,16 @@ async def suporte_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📞 Central de Suporte\n\nContate: @Lyhhxv")
 
 # --------------------------
-# EXCLUSÃO AUTOMÁTICA QUANDO SAI DO CANAL/GRUPO
+# REMOÇÃO AUTOMÁTICA QUANDO SAI
 # --------------------------
 async def verificar_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     res = update.my_chat_member
     if not res: return
     chat, status = res.chat, res.new_chat_member.status
-    # Se saiu/foi expulso do canal VIP → APAGA DO BANCO IMEDIATAMENTE
     if chat.id == CANAL_ALVO_ID:
         usuario_id = res.from_user.id
         if status in ("left", "kicked", "restricted"):
-            apagado = collection_clientes.delete_one({"user_id": usuario_id}).deleted_count
-            if apagado: print(f"✅ Usuário {usuario_id} saiu → removido do banco!")
-    # Salva outros chats normalmente
+            collection_clientes.delete_one({"user_id": usuario_id})
     if chat.type in ("group","supergroup","channel"):
         if status in ("member","administrator"):
             collection_chats.update_one({"chat_id":chat.id}, {"$set":{"chat_id":chat.id,"title":chat.title,"type":chat.type}}, upsert=True)
@@ -153,7 +150,7 @@ async def verificar_my_chat_member(update: Update, context: ContextTypes.DEFAULT
             collection_chats.delete_one({"chat_id":chat.id})
 
 # --------------------------
-# BLOQUEIO DE FLOOD PARA USUÁRIOS NORMAIS
+# BLOQUEIO DE FLOOD
 # --------------------------
 async def interceptador_universal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -178,12 +175,12 @@ async def interceptador_universal(update: Update, context: ContextTypes.DEFAULT_
         else: raise ApplicationHandlerStop
 
 # --------------------------
-# MENSAGEM DE INICIO E PLANOS
+# INICIO
 # --------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private": return
     texto = (
-        "𝗧𝗢𝗗𝗢𝗦 𝗢𝗦 𝗖𝗢𝗡𝗧𝗘𝗨𝗗𝗢𝗦 𝗩𝗔𝗭𝗔𝗗0𝗦🤫 𝗗𝗢 𝗠𝗢𝗠𝗘𝗡𝗧𝗢🥵\n\n"
+        "𝗧𝗢𝗗𝗢𝗦 𝗢𝗦 𝗖𝗢𝗡𝗧𝗘𝗨𝗗𝗢𝗦 𝗩𝗔𝗭𝗔𝗗𝗢𝗦🤫 𝗗𝗢 𝗠𝗢𝗠𝗘𝗡𝗧𝗢🥵\n\n"
         "Tenha acesso completo a todo conteúdo atualizado:\nMais de 20mil mídias disponíveis!\n\nEscolha seu plano VIP:"
     )
     botoes = [
@@ -197,13 +194,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except: await update.message.reply_text(texto, reply_markup=InlineKeyboardMarkup(botoes))
 
 # --------------------------
-# PAGAMENTO MERCADO PAGO PIX
+# PAGAMENTO MERCADO PAGO
 # --------------------------
 async def gerar_pagamento(valor, user):
     url = "https://api.mercadopago.com/v1/payments"
     headers = {"Authorization":f"Bearer {MP_ACCESS_TOKEN}","Content-Type":"application/json","X-Idempotency-Key":str(uuid.uuid4())}
     try:
-        r = requests.post(url, json={"transaction_amount":valor,"description":f"Acesso VIP R${valor:.2f}","payment_method_id":"pix","payer":{"email":f"user{user.id}@bot.com","first_name":user.first_name or "Cliente"}}, headers=headers, timeout=15)
+        r = requests.post(url, json={"transaction_amount":valor,"description":f"Acesso VIP R${valor:.2f}","payment_method_id":"pix","payer":{"email":f"user_{user.id}@bot.com","first_name":user.first_name or "Cliente"}}, headers=headers, timeout=15)
         if r.status_code==201: return True, r.json()["id"], r.json()["point_of_interaction"]["transaction_data"]["qr_code"]
         return False, None, f"Erro API: {r.status_code}"
     except Exception as e: return False, None, str(e)
@@ -215,7 +212,7 @@ async def verificar_pagamento(pag_id):
     except: return False,0
 
 # --------------------------
-# PROCESSAR BOTÕES DE PAGAMENTO
+# BOTÕES
 # --------------------------
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -240,7 +237,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         aprovado, val_pago = await verificar_pagamento(dados.split("_")[1])
         if aprovado:
             await query.answer("✅ PAGAMENTO APROVADO!", show_alert=True)
-            # Define duração do plano
             if abs(val_pago-1)<0.01: seg, nome = 3600, "1 Hora"
             elif abs(val_pago-5)<0.01: seg, nome = 86400, "1 Dia"
             elif abs(val_pago-10)<0.01: seg, nome = 86400*7, "1 Semana"
@@ -255,13 +251,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 {"$set":{"user_id":user.id,"nome":user.first_name or "Cliente","username":f"@{user.username}"if user.username else"Sem @","expira_em":expira,"valor_pago":f"{val_pago:.2f}","data_compra":time.time(),"aviso_1dia_enviado":False,"aviso_20min_enviado":False}},
                 upsert=True
             )
-            # Gerar link de convite único
             try: link = await context.bot.create_chat_invite_link(CANAL_ALVO_ID, expire_date=int(time.time())+86400, member_limit=1)
             except: link = None
             await query.message.reply_text(
                 f"🎉 ACESSO LIBERADO!\n\nPlano: {nome}\nValor Pago: R$ {val_pago:.2f}\n\nSeu link: {link.invite_link if link else 'Contate o suporte @Lyhhxv'}\n\nAproveite muito 🩷"
             )
-            # Aviso enviado APENAS para VOCÊ (dono)
             if dados.split("_")[1] not in pagamentos_notificados:
                 pagamentos_notificados.add(dados.split("_")[1])
                 await context.bot.send_message(
@@ -280,7 +274,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]))
 
 # --------------------------
-# GERENCIADOR DE ASSINATURAS (RODA SEM PARAR EM BACKGROUND)
+# GERENCIADOR DE ASSINATURAS (REMOÇÃO AUTOMÁTICA AO EXPIRAR)
 # --------------------------
 async def gerenciador_assinaturas(app):
     await asyncio.sleep(10)
@@ -288,17 +282,14 @@ async def gerenciador_assinaturas(app):
         agora = time.time()
         for cli in collection_clientes.find({}):
             rest = cli.get("expira_em",0) - agora
-            # Aviso 1 dia antes de vencer
             if 82800 <= rest <= 86400 and not cli.get("aviso_1dia_enviado"):
                 try: await app.bot.send_message(cli["user_id"], "⚠️ SEU PLANO VENCE AMANHÃ! Renove agora!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Renovar R$1",callback_data="comprar_1.00")],[InlineKeyboardButton("Renovar R$5",callback_data="comprar_5.00")]]))
                 except: pass
                 collection_clientes.update_one({"user_id":cli["user_id"]},{"$set":{"aviso_1dia_enviado":True}})
-            # Aviso 20 minutos antes
             elif 0 < rest <= 1200 and not cli.get("aviso_20min_enviado"):
                 try: await app.bot.send_message(cli["user_id"], "🚨 ACABANDO EM MINUTOS! RENOVE AGORA!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Renovar R$1",callback_data="comprar_1.00")]]))
                 except: pass
                 collection_clientes.update_one({"user_id":cli["user_id"]},{"$set":{"aviso_20min_enviado":True}})
-            # Expirou → tira acesso e apaga do banco
             elif rest <=0:
                 try: await app.bot.kick_chat_member(CANAL_ALVO_ID, cli["user_id"]); await app.bot.unban_chat_member(CANAL_ALVO_ID, cli["user_id"])
                 except: pass
@@ -306,13 +297,13 @@ async def gerenciador_assinaturas(app):
         await asyncio.sleep(60)
 
 # --------------------------
-# INICIALIZAÇÃO COMPATÍVEL COM RENDER
+# INICIALIZAÇÃO
 # --------------------------
 def run_bot():
     async def bot_loop():
         app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
         app.add_handler(TypeHandler(Update, interceptador_universal), group=-1)
-        app.add_handler(ChatMemberHandler(verificar_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
+        app.add_handler(ChatMemberHandler(verificar_my_chat_member))
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("suporte", suporte_cmd))
         app.add_handler(CommandHandler("suport", suporte_cmd))
@@ -322,11 +313,10 @@ def run_bot():
         app.add_handler(CommandHandler("clientes", clientes_cmd))
         app.add_handler(CallbackQueryHandler(button_handler))
         asyncio.create_task(gerenciador_assinaturas(app))
-        await app.run_polling(drop_pending_updates=True) # Limpa mensagens antigas ao ligar
+        await app.run_polling(drop_pending_updates=True)
     asyncio.run(bot_loop())
 
 if __name__ == "__main__":
-    # Roda Flask em thread separada sem conflito
     threading.Thread(target=run_bot, daemon=True).start()
-    print("✅ BOT + FLASK ONLINE E ESTÁVEL NO RENDER!")
+    print("✅ BOT ONLINE COM python-telegram-bot 22.8!")
     app_web.run(host="0.0.0.0", port=int(os.environ.get("PORT",10000)))
