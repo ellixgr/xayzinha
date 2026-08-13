@@ -71,6 +71,13 @@ TEMPO_BLOQUEIO_FLOD = 600
 
 pagamentos_notificados = set()
 
+# Função nova: verifica se é cliente ativo
+def eh_cliente_ativo(user_id: int) -> bool:
+    if user_id == DONO_ID:
+        return True
+    cli = collection_clientes.find_one({"user_id": user_id})
+    return bool(cli and cli.get("expira_em", 0) > time.time())
+
 def formatar_tempo_restante(segundos):
     if segundos <= 0:
         return "Expirado"
@@ -129,35 +136,47 @@ async def clientes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         agora = time.time()
         clientes = list(collection_clientes.find({}))
         if not clientes:
-            await update.message.reply_text("Nenhum cliente cadastrado no momento.")
+            await update.message.reply_text("📭 Nenhum cliente cadastrado no momento.")
             return
-        texto = f"LISTA DE CLIENTES ATIVOS ({len(clientes)}):\n\n"
+        texto = f"📋 LISTA DE CLIENTES ATIVOS ({len(clientes)}):\n⏰ Dados atualizados em tempo real!\n\n"
         for idx, cli in enumerate(clientes, 1):
-            user_id = cli.get("user_id", "?")
-            nome = cli.get("nome", "Nao informado")
+            user_id = cli.get("user_id")
             expira_em = cli.get("expira_em", 0)
             tempo_restante = expira_em - agora
             tempo_str = formatar_tempo_restante(tempo_restante)
-            if tempo_str == "Permanente":
-                data_limite = "Permanente"
-            else:
-                data_limite = formatar_data_rj(expira_em)
+            nome_atual = "❌ Não consegue carregar"
+            username_atual = "Sem @"
+            try:
+                usuario = await context.bot.get_chat(user_id)
+                nome_completo = f"{usuario.first_name or ''} {usuario.last_name or ''}".strip()
+                nome_atual = nome_completo if nome_completo else "Sem nome"
+                username_atual = f"@{usuario.username}" if usuario.username else "Sem @"
+            except Exception as e:
+                nome_atual = cli.get("nome", "Não foi possível carregar")
+                username_atual = cli.get("username", "Sem @")
+            collection_clientes.update_one(
+                {"user_id": user_id},
+                {"$set": {"nome": nome_atual, "username": username_atual}}
+            )
             valor_pago = cli.get("valor_pago", "Sem registro")
             data_compra_ts = cli.get("data_compra")
             data_compra = formatar_data_rj(data_compra_ts) if data_compra_ts else "Sem registro"
-            username = cli.get("username", "Sem registro")
+            data_limite = "♾️ PERMANENTE" if tempo_str == "Permanente" else formatar_data_rj(expira_em)
+
             texto += (
-                f"{idx}. {nome}\n"
-                f"ID: {user_id}\n"
-                f"@: {username}\n"
-                f"Valor Pago: R$ {valor_pago}\n"
-                f"Pagamento: {data_compra}\n"
-                f"Expira em: {tempo_str}\n"
-                f"Limite: {data_limite}\n\n"
+                f"🔹 {idx}. {nome_atual}\n"
+                f"🆔 ID: {user_id}\n"
+                f"👤 Usuário: {username_atual}\n"
+                f"💰 Valor Pago: R$ {valor_pago}\n"
+                f"📅 Compra: {data_compra}\n"
+                f"⏳ Restante: {tempo_str}\n"
+                f"📆 Expira: {data_limite}\n\n"
             )
+
         await update.message.reply_text(texto)
     except Exception as e:
-        await update.message.reply_text(f"Erro ao listar clientes: {e}")
+        await update.message.reply_text(f"❌ Erro ao listar clientes: {str(e)}")
+
 
 async def interceptador_universal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -208,6 +227,24 @@ async def interceptador_universal(update: Update, context: ContextTypes.DEFAULT_
             return
         else:
             raise ApplicationHandlerStop
+
+# Handler de bloqueio de entrada adicionado
+async def bloquear_nao_pagantes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    membro = update.chat_member
+    if not membro or membro.chat.id != CANAL_ALVO_ID:
+        return
+    usuario = membro.new_chat_member.user
+    if membro.new_chat_member.status == "member":
+        if not eh_cliente_ativo(usuario.id):
+            try:
+                await context.bot.send_message(
+                    usuario.id,
+                    "❌ Acesso negado! Compre um plano pelo /start para entrar no grupo."
+                )
+                await context.bot.ban_chat_member(CANAL_ALVO_ID, usuario.id)
+                await context.bot.unban_chat_member(CANAL_ALVO_ID, usuario.id)
+            except Exception as e:
+                print(f"Erro ao remover usuário não autorizado: {e}")
 
 async def verificar_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = update.my_chat_member
@@ -526,6 +563,8 @@ def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     threading.Thread(target=run_background_loop, args=(app,), daemon=True).start()
     app.add_handler(TypeHandler(Update, interceptador_universal), group=-1)
+    # Adiciona o handler do bloqueio
+    app.add_handler(ChatMemberHandler(bloquear_nao_pagantes))
     app.add_handler(ChatMemberHandler(verificar_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("suporte", suporte_cmd))
@@ -535,7 +574,7 @@ def main():
     app.add_handler(CommandHandler("pegarid", pegarid_cmd))
     app.add_handler(CommandHandler("clientes", clientes_cmd))
     app.add_handler(CallbackQueryHandler(button_handler))
-    print("BOT ONLINE — VALORES ATUALIZADOS!")
+    print("BOT ONLINE — BLOQUEIO DE ENTRADA ATIVO!")
     app.run_polling(drop_pending_updates=False)
 
 if __name__ == "__main__":
