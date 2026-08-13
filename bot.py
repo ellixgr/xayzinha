@@ -32,8 +32,9 @@ def run_web():
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 MP_ACCESS_TOKEN = os.environ.get("MP_ACCESS_TOKEN")
-DONO_ID = int(os.environ.get("DONO_ID", 7711945457))
-CANAL_ALVO_ID = int(os.environ.get("CANAL_ALVO_ID", -1004399892914))
+DONO_ID = int(os.environ.get("DONO_ID", 0))
+CANAL_ALVO_ID = int(os.environ.get("CANAL_ALVO_ID", 0))
+
 MONGO_URI = os.environ.get("MONGO_URI")
 
 
