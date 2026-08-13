@@ -1,4 +1,4 @@
-import os
+ACESSO os
 import uuid
 import time
 import asyncio
@@ -243,7 +243,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("ACESSO POR 1 DIA -> R$ 5,00", callback_data="comprar_5.00")],
         [InlineKeyboardButton("ACESSO POR 1 SEMANA -> R$ 10,00", callback_data="comprar_10.00")],
         [InlineKeyboardButton("ACESSO POR 1 MES -> R$ 30,00", callback_data="comprar_30.00")],
-        [InlineKeyboardButton("🔴 ACESSO PERMANENTE -> R$ 55,00", callback_data="comprar_55.00")],
+        [InlineKeyboardButton("💎PERMANENTE PERMANENTE -> R$ 55,00", callback_data="comprar_55.00")],
         [InlineKeyboardButton("𝑷𝑹𝑬𝑽𝑰𝑨𝑺 𝑮𝑹𝑨𝑻𝑰𝑺🔥", url="https://t.me/+Qmozi6YQ5dE1MDYx")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
